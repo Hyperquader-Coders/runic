@@ -15,6 +15,7 @@
 !test_data/foozy/foozy-macos.expected.h
 !test_data/the_system/my_system.h
 !test_data/multi_pointer.h
+!test_data/va_list.h
 test_data/*.ppp.*
 test_data/*.pp.*
 test_data/*.ppp-pp.*

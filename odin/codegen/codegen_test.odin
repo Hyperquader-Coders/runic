@@ -813,61 +813,59 @@ foreign import multi_runic "system:multi"
     diff.expect_diff_strings(t, MACOS_EXPECTED, string(macos_data))
 }
 
+// Generate Odin bindings for one header with the package name "multi_pointer".
+gen_header_bindings :: proc(
+    t: ^testing.T,
+    header: string,
+    detect: runic.OdinDetect,
+) -> string {
+    rf := runic.From {
+        language = "c",
+        shared = {d = {runic.Platform{.Any, .Any} = "libmulti_pointer.so"}},
+        headers = {d = {runic.Platform{.Any, .Any} = {header}}},
+    }
+    rt := runic.To {
+        language = "odin",
+        package_name = "multi_pointer",
+        detect = detect,
+        no_build_tag = true,
+    }
+
+    rs, err := cppcdg.generate_runestone(
+        runic.platform_from_host(),
+        RUNESTONE_TEST_PATH,
+        rf,
+    )
+    if !testing.expect_value(t, err, nil) do return ""
+    runic.from_postprocess_runestone(&rs, rf)
+    runic.to_preprocess_runestone(&rs, rt, ODIN_RESERVED)
+
+    rc: runic.Runecross = ---
+    rc, err = runic.cross_the_runes({RUNESTONE_TEST_PATH}, {rs})
+    if !testing.expect_value(t, err, nil) do return ""
+
+    sb: strings.Builder
+    errw := errors.wrap(
+        generate_bindings(
+            rc,
+            rt,
+            {runic.platform_from_host()},
+            strings.to_stream(&sb),
+            RUNESTONE_TEST_PATH,
+        ),
+    )
+    if !testing.expect_value(t, errw, nil) do return ""
+    return strings.to_string(sb)
+}
+
 @(test)
 test_to_odin_declared_arrays :: proc(t: ^testing.T) {
     arena: runtime.Arena
     defer runtime.arena_destroy(&arena)
     context.allocator = runtime.arena_allocator(&arena)
 
-    rf := runic.From {
-        language = "c",
-        shared = {d = {runic.Platform{.Any, .Any} = "libmulti_pointer.so"}},
-        headers = {
-            d = {runic.Platform{.Any, .Any} = {"test_data/multi_pointer.h"}},
-        },
-    }
-
-    gen :: proc(
-        t: ^testing.T,
-        rf: runic.From,
-        detect: runic.OdinDetect,
-    ) -> string {
-        rt := runic.To {
-            language = "odin",
-            package_name = "multi_pointer",
-            detect = detect,
-            no_build_tag = true,
-        }
-
-        rs, err := cppcdg.generate_runestone(
-            runic.platform_from_host(),
-            RUNESTONE_TEST_PATH,
-            rf,
-        )
-        if !testing.expect_value(t, err, nil) do return ""
-        runic.from_postprocess_runestone(&rs, rf)
-        runic.to_preprocess_runestone(&rs, rt, ODIN_RESERVED)
-
-        rc: runic.Runecross = ---
-        rc, err = runic.cross_the_runes({RUNESTONE_TEST_PATH}, {rs})
-        if !testing.expect_value(t, err, nil) do return ""
-
-        sb: strings.Builder
-        errw := errors.wrap(
-            generate_bindings(
-                rc,
-                rt,
-                {runic.platform_from_host()},
-                strings.to_stream(&sb),
-                RUNESTONE_TEST_PATH,
-            ),
-        )
-        if !testing.expect_value(t, errw, nil) do return ""
-        return strings.to_string(sb)
-    }
-
     // Unchanged default: the name heuristic.
-    auto := gen(t, rf, {multi_pointer = "auto"})
+    auto := gen_header_bindings(t, "test_data/multi_pointer.h", {multi_pointer = "auto"})
     AUTO_EXPECTED :: `package multi_pointer
 
 Settings :: struct {
@@ -899,9 +897,9 @@ foreign import multi_pointer_runic "system:multi_pointer"
     diff.expect_diff_strings(t, AUTO_EXPECTED, auto, ".odin")
 
     // Declared: only the listed parameters are arrays.
-    declared := gen(
+    declared := gen_header_bindings(
         t,
-        rf,
+        "test_data/multi_pointer.h",
         {
             multi_pointer = "auto",
             parameters = "declared",
@@ -937,4 +935,34 @@ foreign import multi_pointer_runic "system:multi_pointer"
 
 `
     diff.expect_diff_strings(t, DECLARED_EXPECTED, declared, ".odin")
+}
+
+@(test)
+test_to_odin_va_list_skipped :: proc(t: ^testing.T) {
+    arena: runtime.Arena
+    defer runtime.arena_destroy(&arena)
+    context.allocator = runtime.arena_allocator(&arena)
+
+    out := gen_header_bindings(t, "test_data/va_list.h", {multi_pointer = "auto"})
+
+    EXPECTED :: `package multi_pointer
+
+va_list :: rawptr
+
+@(default_calling_convention = "c")
+foreign multi_pointer_runic {
+    @(link_name = "app_log")
+    app_log :: proc(fmt: cstring, #c_vararg var_args: ..any) ---
+
+    // app_logv skipped: its trailing va_list is dropped by runic, so it would be a wrong #c_vararg ..any call
+
+    @(link_name = "app_count")
+    app_count :: proc(n: i32) -> i32 ---
+
+}
+
+foreign import multi_pointer_runic "system:multi_pointer"
+
+`
+    diff.expect_diff_strings(t, EXPECTED, out, ".odin")
 }

@@ -809,6 +809,13 @@ parse_func_token :: proc(
                 token = odintz.scan(tokenizer)
                 continue
             }
+            if p.kind == .Ident && p.text == "VaList" {
+                func.variadic = true
+                func.va_list = true
+                tokenizer^ = ptz
+                token = odintz.scan(tokenizer)
+                continue
+            }
         }
 
         type: Type = ---
@@ -1161,7 +1168,10 @@ write_function :: proc(wd: io.Writer, fc: Function) -> io.Error {
         write_type(wd, p.type) or_return
     }
 
-    if fc.variadic {
+    if fc.va_list {
+        io.write_rune(wd, ' ') or_return
+        io.write_string(wd, "va_list #VaList") or_return
+    } else if fc.variadic {
         io.write_rune(wd, ' ') or_return
         io.write_string(wd, "var_args #Variadic") or_return
     }

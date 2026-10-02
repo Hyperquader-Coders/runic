@@ -112,6 +112,8 @@ Function :: struct {
     return_type: Type,
     parameters:  [dynamic]Member,
     variadic:    bool,
+    // The C declaration ends in va_list; it is dropped and `variadic` is set.
+    va_list:     bool,
     method_info: Maybe(MethodInfo),
 }
 

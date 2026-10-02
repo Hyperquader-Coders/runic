@@ -1053,6 +1053,7 @@ parse_function_decl :: proc(cursor: clang.Cursor) {
         if has_va_list {
             pop(&func.parameters)
             func.variadic = true
+            func.va_list = true
         }
     }
 

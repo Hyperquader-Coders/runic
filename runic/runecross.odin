@@ -470,7 +470,7 @@ is_same_pointer_info :: proc(p1, p2: PointerInfo) -> bool {
 }
 
 is_same_function :: proc(f1, f2: Function) -> bool {
-    if len(f1.parameters) != len(f2.parameters) || f1.variadic != f2.variadic || !is_same(f1.return_type, f2.return_type) do return false
+    if len(f1.parameters) != len(f2.parameters) || f1.variadic != f2.variadic || f1.va_list != f2.va_list || !is_same(f1.return_type, f2.return_type) do return false
 
     for p1, idx in f1.parameters {
         #no_bounds_check p2 := f2.parameters[idx]

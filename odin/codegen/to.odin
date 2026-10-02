@@ -847,6 +847,16 @@ generate_bindings_from_runestone :: proc(
 
         for entry in rs.symbols.data {
             name, sym := entry.key, entry.value
+
+            if f, is_func := sym.value.(runic.Function); is_func && f.va_list {
+                fmt.wprintf(
+                    wd,
+                    "    // {} skipped: its trailing va_list is dropped by runic, so it would be a wrong #c_vararg ..any call\n\n",
+                    name,
+                )
+                continue
+            }
+
             fmt.wprintf(
                 wd,
                 "    @(link_name = \"{}\")\n",
@@ -981,6 +991,7 @@ generate_bindings_from_runestone :: proc(
                         ) or_return
                     }
                 case runic.Function:
+                    if sym_value.va_list do continue
                     io.write_string(wd, alias) or_return
                     io.write_string(wd, " :: ") or_return
                     io.write_string(wd, name) or_return
