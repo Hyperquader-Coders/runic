@@ -1,8 +1,7 @@
 # Decisions — Amber's build of runic
 
-This fork carries upstream runic unchanged, plus the files that make tag 0.8 buildable today.
-The `amber` branch is upstream tag `0.8` (`9bd8391`) with one commit; `amber-0.8` marks it.
-`README.md` and the source are upstream's.
+This fork is upstream runic 0.8 plus the files that make it buildable today (`amber-0.8`) plus
+two generator patches on the branch `amber-patched` (section 4). `README.md` is upstream's.
 
 ## 1. Tag 0.8, built with Odin dev-2026-05
 
@@ -11,8 +10,8 @@ runic 0.8 does not compile on newer Odin: `odin/codegen/from.odin` names
 dev-2026-05, and `amber-build.sh` builds `build/runic` with it:
 
 ```
-git checkout amber-0.8
-./amber-build.sh
+git checkout amber-patched
+./amber-build.sh          # build/runic;  ./amber-build.sh test  runs runic's tests
 ```
 
 It needs `libyaml-dev` and libclang 18; the script links `libclang.so.1` without a system
@@ -27,6 +26,17 @@ generated and checked with. A new upstream tag moves the pin deliberately: tag i
 
 ## 3. What the bindings still need after runic
 
-runic 0.8 leaves `gchar *` as `^char`, because it recognises a char pointer only when the
+Beyond the two faults patched in section 4, runic 0.8 leaves `gchar *` as `^char`, because it recognises a char pointer only when the
 pointee is the built-in type and `gchar` is a typedef. The binding repos rewrite that, and
 other gaps, in their own `scripts/postprocess.sh`; this fork does not change runic's output.
+
+## 4. The two patches on `amber-patched`
+
+Each is one commit on `amber-0.8`, with tests, and is also offered upstream; moving to a newer
+upstream tag means rebasing the two commits.
+
+- **Declared arrays.** runic writes `[^]T` for any pointer whose C name ends in `s`. With
+  `to.detect.parameters: declared` a procedure parameter is `^T` (`T **` is `^^T`) unless
+  `to.detect.arrays` lists it. Without the key nothing changes.
+- **va_list.** A procedure whose last parameter is a `va_list` is not emitted; the foreign block
+  carries a comment naming it. Real `...` procedures are unchanged.
