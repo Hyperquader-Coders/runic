@@ -880,7 +880,14 @@ generate_bindings_from_runestone :: proc(
             case runic.Function:
                 io.write_string(wd, name) or_return
                 io.write_string(wd, " :: ") or_return
-                proc_err := write_procedure(wd, value, rn, rs.externs, nil)
+                proc_err := write_procedure(
+                    wd,
+                    value,
+                    rn,
+                    rs.externs,
+                    nil,
+                    {name, sym.remap.? or_else name},
+                )
                 if proc_err != nil {
                     fmt.eprintfln("{}: {}", name, proc_err)
                     io.write_string(
@@ -986,12 +993,30 @@ generate_bindings_from_runestone :: proc(
     return .None
 }
 
+// Under `to.detect.parameters: declared` a procedure parameter is `[^]T` only
+// when `to.detect.arrays` lists it for the procedure (Odin or C name);
+// otherwise nil, and the name heuristic of `to.detect.multi_pointer` decides.
+parameter_multi_pointer :: proc(
+    rn: runic.To,
+    proc_names: []string,
+    param: string,
+) -> Maybe(bool) {
+    if rn.detect.parameters != "declared" do return nil
+    for pn in proc_names {
+        for a in rn.detect.arrays[pn] or_else nil {
+            if a == param do return true
+        }
+    }
+    return false
+}
+
 write_procedure :: proc(
     wd: io.Writer,
     fc: runic.Function,
     rn: runic.To,
     externs: om.OrderedMap(string, runic.Extern),
     calling_convention: Maybe(string) = "c",
+    proc_names: []string = nil,
 ) -> union {
         io.Error,
         errors.Error,
@@ -1019,6 +1044,7 @@ write_procedure :: proc(
             p.type,
             rn,
             externs,
+            parameter_multi_pointer(rn, proc_names, p.name),
         ) or_return
 
         io.write_string(ps, p.name) or_return
@@ -1055,6 +1081,7 @@ write_type :: proc(
     ty: runic.Type,
     rn: runic.To,
     externs: om.OrderedMap(string, runic.Extern),
+    multi_pointer: Maybe(bool) = nil,
 ) -> (
     err: union {
         io.Error,
@@ -1073,22 +1100,27 @@ write_type :: proc(
 
     is_multi_pointer: bool
 
-    switch rn.detect.multi_pointer {
-    case "auto":
-        is_array_and_pointer :=
-            len(ty.array_info) != 0 &&
-            ty.array_info[len(ty.array_info) - 1].pointer_info.count != 0
+    is_array_and_pointer :=
+        len(ty.array_info) != 0 &&
+        ty.array_info[len(ty.array_info) - 1].pointer_info.count != 0
+    has_pointer :=
+        is_array_and_pointer ||
+        (len(ty.array_info) == 0 && pointer_count >= 1)
 
-        if (is_array_and_pointer ||
-               (len(ty.array_info) == 0 && pointer_count >= 1)) &&
-           len(var_name) > 1 &&
-           strings.has_suffix(var_name, "s") {
-            is_multi_pointer = true
-            if is_array_and_pointer {
-                ty.array_info[len(ty.array_info) - 1].pointer_info.count -= 1
-            } else {
-                pointer_count -= 1
-            }
+    want_multi: bool
+    if declared, ok := multi_pointer.?; ok {
+        // Procedure parameter under `to.detect.parameters: declared`.
+        want_multi = declared
+    } else if rn.detect.multi_pointer == "auto" {
+        want_multi = len(var_name) > 1 && strings.has_suffix(var_name, "s")
+    }
+
+    if want_multi && has_pointer {
+        is_multi_pointer = true
+        if is_array_and_pointer {
+            ty.array_info[len(ty.array_info) - 1].pointer_info.count -= 1
+        } else {
+            pointer_count -= 1
         }
     }
 

@@ -812,3 +812,129 @@ foreign import multi_runic "system:multi"
     diff.expect_diff_strings(t, WINDOWS_EXPECTED, string(windows_data))
     diff.expect_diff_strings(t, MACOS_EXPECTED, string(macos_data))
 }
+
+@(test)
+test_to_odin_declared_arrays :: proc(t: ^testing.T) {
+    arena: runtime.Arena
+    defer runtime.arena_destroy(&arena)
+    context.allocator = runtime.arena_allocator(&arena)
+
+    rf := runic.From {
+        language = "c",
+        shared = {d = {runic.Platform{.Any, .Any} = "libmulti_pointer.so"}},
+        headers = {
+            d = {runic.Platform{.Any, .Any} = {"test_data/multi_pointer.h"}},
+        },
+    }
+
+    gen :: proc(
+        t: ^testing.T,
+        rf: runic.From,
+        detect: runic.OdinDetect,
+    ) -> string {
+        rt := runic.To {
+            language = "odin",
+            package_name = "multi_pointer",
+            detect = detect,
+            no_build_tag = true,
+        }
+
+        rs, err := cppcdg.generate_runestone(
+            runic.platform_from_host(),
+            RUNESTONE_TEST_PATH,
+            rf,
+        )
+        if !testing.expect_value(t, err, nil) do return ""
+        runic.from_postprocess_runestone(&rs, rf)
+        runic.to_preprocess_runestone(&rs, rt, ODIN_RESERVED)
+
+        rc: runic.Runecross = ---
+        rc, err = runic.cross_the_runes({RUNESTONE_TEST_PATH}, {rs})
+        if !testing.expect_value(t, err, nil) do return ""
+
+        sb: strings.Builder
+        errw := errors.wrap(
+            generate_bindings(
+                rc,
+                rt,
+                {runic.platform_from_host()},
+                strings.to_stream(&sb),
+                RUNESTONE_TEST_PATH,
+            ),
+        )
+        if !testing.expect_value(t, errw, nil) do return ""
+        return strings.to_string(sb)
+    }
+
+    // Unchanged default: the name heuristic.
+    auto := gen(t, rf, {multi_pointer = "auto"})
+    AUTO_EXPECTED :: `package multi_pointer
+
+Settings :: struct {
+    a: i32,
+}
+Item :: struct {
+    v: i32,
+}
+
+@(default_calling_convention = "c")
+foreign multi_pointer_runic {
+    @(link_name = "app_apply")
+    app_apply :: proc(settings: [^]Settings) ---
+
+    @(link_name = "app_set_items")
+    app_set_items :: proc(items: [^]Item, n: i32) ---
+
+    @(link_name = "app_get_item")
+    app_get_item :: proc(out: ^^Item) ---
+
+    @(link_name = "app_get_items")
+    app_get_items :: proc(items: [^]^Item, n: ^i32) ---
+
+}
+
+foreign import multi_pointer_runic "system:multi_pointer"
+
+`
+    diff.expect_diff_strings(t, AUTO_EXPECTED, auto, ".odin")
+
+    // Declared: only the listed parameters are arrays.
+    declared := gen(
+        t,
+        rf,
+        {
+            multi_pointer = "auto",
+            parameters = "declared",
+            arrays = {"app_set_items" = {"items"}},
+        },
+    )
+    DECLARED_EXPECTED :: `package multi_pointer
+
+Settings :: struct {
+    a: i32,
+}
+Item :: struct {
+    v: i32,
+}
+
+@(default_calling_convention = "c")
+foreign multi_pointer_runic {
+    @(link_name = "app_apply")
+    app_apply :: proc(settings: ^Settings) ---
+
+    @(link_name = "app_set_items")
+    app_set_items :: proc(items: [^]Item, n: i32) ---
+
+    @(link_name = "app_get_item")
+    app_get_item :: proc(out: ^^Item) ---
+
+    @(link_name = "app_get_items")
+    app_get_items :: proc(items: ^^Item, n: ^i32) ---
+
+}
+
+foreign import multi_pointer_runic "system:multi_pointer"
+
+`
+    diff.expect_diff_strings(t, DECLARED_EXPECTED, declared, ".odin")
+}

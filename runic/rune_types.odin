@@ -187,6 +187,10 @@ OverwriteInstruction :: union {
 
 OdinDetect :: struct {
     multi_pointer: string,
+    // "declared": procedure parameters are [^]T only if listed in `arrays`.
+    parameters:    string,
+    // procedure name -> parameter names that are arrays
+    arrays:        map[string][]string,
 }
 
 

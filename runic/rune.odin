@@ -2377,6 +2377,51 @@ parse_rune :: proc(
                             "\"to.detect.multi_pointer\" has invalid type",
                         ) or_return
                     }
+                    if params, p_ok := d["parameters"]; p_ok {
+                        t.detect.parameters, p_ok = params.(string)
+                        errors.wrap(
+                            p_ok,
+                            "\"to.detect.parameters\" has invalid type",
+                        ) or_return
+                    }
+                    if arrays, a_ok := d["arrays"]; a_ok {
+                        a_map: yaml.Mapping
+                        a_map, a_ok = arrays.(yaml.Mapping)
+                        errors.wrap(
+                            a_ok,
+                            "\"to.detect.arrays\" has invalid type",
+                        ) or_return
+
+                        t.detect.arrays = make(
+                            map[string][]string,
+                            allocator = rn_arena_alloc,
+                        )
+                        for proc_name, names in a_map {
+                            #partial switch n in names {
+                            case string:
+                                arr := make([]string, 1, rn_arena_alloc)
+                                arr[0] = n
+                                t.detect.arrays[proc_name] = arr
+                            case yaml.Sequence:
+                                arr := make([]string, len(n), rn_arena_alloc)
+                                for seq_v, idx in n {
+                                    arr[idx], a_ok = seq_v.(string)
+                                    errors.wrap(
+                                        a_ok,
+                                        "\"to.detect.arrays\" parameter has invalid type",
+                                    ) or_return
+                                }
+                                t.detect.arrays[proc_name] = arr
+                            case:
+                                err = errors.message(
+                                    "\"to.detect.arrays.{}\" has invalid type %T",
+                                    proc_name,
+                                    n,
+                                )
+                                return
+                            }
+                        }
+                    }
                 case:
                     err = errors.message(
                         "\"to.detect\" has invalid type %T",
