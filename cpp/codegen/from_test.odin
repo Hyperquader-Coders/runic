@@ -1104,43 +1104,47 @@ test_cpp_array_parameter :: proc(t: ^testing.T) {
     if !testing.expect_value(t, err, nil) do return
     defer runic.runestone_destroy(&rs)
 
-    // `char keys_return[32]` is passed as `char *`.
+    // `char keys_return[32]` is passed as a pointer to chars: `[^]i8`.
     query := om.get(rs.symbols, "query_keymap").value.(runic.Function)
     if testing.expect_value(t, len(query.parameters), 2) {
         keys := query.parameters[1].type
         testing.expect_value(t, keys.spec.(runic.Builtin), runic.Builtin.SInt8)
-        testing.expect_value(t, keys.pointer_info.count, 1)
-        testing.expect_value(t, len(keys.array_info), 0)
+        testing.expect_value(t, keys.pointer_info.count, 0)
+        if testing.expect_value(t, len(keys.array_info), 1) {
+            testing.expect_value(t, keys.array_info[0].size, nil)
+        }
     }
 
-    // `int m[2][3]` is passed as `int (*)[3]`.
+    // `int m[2][3]` is passed as a pointer to rows of three: `[^][3]i32`.
     mat := om.get(rs.symbols, "matrix").value.(runic.Function)
     if testing.expect_value(t, len(mat.parameters), 1) {
         m := mat.parameters[0].type
         testing.expect_value(t, m.spec.(runic.Builtin), runic.Builtin.SInt32)
         testing.expect_value(t, m.pointer_info.count, 0)
-        if testing.expect_value(t, len(m.array_info), 1) {
-            testing.expect_value(t, m.array_info[0].size.(u64), 3)
-            testing.expect_value(t, m.array_info[0].pointer_info.count, 1)
+        if testing.expect_value(t, len(m.array_info), 2) {
+            testing.expect_value(t, m.array_info[0].size, nil)
+            testing.expect_value(t, m.array_info[1].size.(u64), 3)
         }
     }
 
-    // `const char *list[]` is passed as `const char **`.
+    // `const char *list[]` is unchanged: a pointer to strings, `[^]cstring`.
     names := om.get(rs.symbols, "names").value.(runic.Function)
     if testing.expect_value(t, len(names.parameters), 1) {
         list := names.parameters[0].type
         testing.expect_value(t, list.spec.(runic.Builtin), runic.Builtin.String)
-        testing.expect_value(t, list.pointer_info.count, 1)
-        testing.expect_value(t, len(list.array_info), 0)
+        if testing.expect_value(t, len(list.array_info), 1) {
+            testing.expect_value(t, list.array_info[0].size, nil)
+        }
     }
 
-    // The parameters of a function-pointer type decay the same way.
+    // The parameters of a function-pointer type are passed the same way.
     cb := om.get(rs.types, "keymap_cb")
     fp := cb.spec.(runic.FunctionPointer)
     if testing.expect_value(t, len(fp.parameters), 1) {
         keys := fp.parameters[0].type
         testing.expect_value(t, keys.spec.(runic.Builtin), runic.Builtin.SInt8)
-        testing.expect_value(t, keys.pointer_info.count, 1)
-        testing.expect_value(t, len(keys.array_info), 0)
+        if testing.expect_value(t, len(keys.array_info), 1) {
+            testing.expect_value(t, keys.array_info[0].size, nil)
+        }
     }
 }

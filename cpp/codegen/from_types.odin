@@ -754,18 +754,13 @@ handle_builtin_int :: proc {
     handle_builtin_int_string,
 }
 
-// decay_array_parameter turns the type of a parameter declared as an array,
-// `char keys[32]`, into the pointer C passes: the outermost dimension becomes
-// a pointer to what is left (`char *`; `int m[2][3]` is `int (*)[3]`). An
+// decay_array_parameter turns the type of a parameter declared as an array into
+// what C passes, a pointer to its elements, written as Odin's multi-pointer: the
+// outermost dimension loses its size (`char keys[32]` is `[^]i8`, `int m[2][3]`
+// is `[^][3]i32`), as a parameter declared `char keys[]` already has none. An
 // array is never passed by value in C.
 @(private)
 decay_array_parameter :: proc(type: ^runic.Type) {
     if len(type.array_info) == 0 do return
-
-    ordered_remove(&type.array_info, 0)
-    if len(type.array_info) == 0 {
-        type.pointer_info.count += 1
-    } else {
-        type.array_info[len(type.array_info) - 1].pointer_info.count += 1
-    }
+    type.array_info[0].size = nil
 }

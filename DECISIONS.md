@@ -50,6 +50,8 @@ upstream tag means rebasing these commits.
   keyword, an attribute) or an unsigned value past `i64` is dropped, with a line on stderr naming
   it; constants the rune ignores are left alone. Without the key nothing changes.
 - **Array parameters.** runic types a parameter declared as an array, `char keys[32]`, as the
-  array, which an Odin procedure passes by value; C passes a pointer. The outermost dimension
-  becomes a pointer (`char *`; `int m[2][3]` is `int (*)[3]`), in procedures and in
-  function-pointer types.
+  array, which an Odin procedure passes by value; C passes a pointer to its elements. The
+  outermost dimension loses its size and so is written as a multi-pointer (`[^]i8`; `int m[2][3]`
+  is `[^][3]i32`), as a parameter declared without a size (`char keys[]`) already is, in
+  procedures and in function-pointer types. Rejected: a pointer to one element (`^i8`), which
+  cannot be indexed and changed every binding's `T x[]` parameters.
