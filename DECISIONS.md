@@ -49,3 +49,7 @@ upstream tag means rebasing these commits.
   integer or float result is the constant's value. A macro that is no constant expression (a
   keyword, an attribute) or an unsigned value past `i64` is dropped, with a line on stderr naming
   it; constants the rune ignores are left alone. Without the key nothing changes.
+- **Array parameters.** runic types a parameter declared as an array, `char keys[32]`, as the
+  array, which an Odin procedure passes by value; C passes a pointer. The outermost dimension
+  becomes a pointer (`char *`; `int m[2][3]` is `int (*)[3]`), in procedures and in
+  function-pointer types.

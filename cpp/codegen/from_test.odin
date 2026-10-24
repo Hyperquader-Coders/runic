@@ -1081,3 +1081,66 @@ test_cpp_evaluate_macros :: proc(t: ^testing.T) {
     testing.expect(t, !om.contains(rs.constants, "UNUSED"))
     testing.expect(t, !om.contains(rs.constants, "ALL_ONES"))
 }
+
+@(test)
+test_cpp_array_parameter :: proc(t: ^testing.T) {
+    rf := runic.From {
+        language = "c",
+        shared = {d = {runic.Platform{.Any, .Any} = "libarray_parameter.so"}},
+        headers = {
+            d = {
+                runic.Platform{.Any, .Any} = {"test_data/array_parameter.h"},
+            },
+        },
+    }
+    defer delete(rf.shared.d)
+    defer delete(rf.headers.d)
+
+    rs, err := generate_runestone(
+        runic.Platform{.Linux, .x86_64},
+        RUNESTONE_TEST_PATH,
+        rf,
+    )
+    if !testing.expect_value(t, err, nil) do return
+    defer runic.runestone_destroy(&rs)
+
+    // `char keys_return[32]` is passed as `char *`.
+    query := om.get(rs.symbols, "query_keymap").value.(runic.Function)
+    if testing.expect_value(t, len(query.parameters), 2) {
+        keys := query.parameters[1].type
+        testing.expect_value(t, keys.spec.(runic.Builtin), runic.Builtin.SInt8)
+        testing.expect_value(t, keys.pointer_info.count, 1)
+        testing.expect_value(t, len(keys.array_info), 0)
+    }
+
+    // `int m[2][3]` is passed as `int (*)[3]`.
+    mat := om.get(rs.symbols, "matrix").value.(runic.Function)
+    if testing.expect_value(t, len(mat.parameters), 1) {
+        m := mat.parameters[0].type
+        testing.expect_value(t, m.spec.(runic.Builtin), runic.Builtin.SInt32)
+        testing.expect_value(t, m.pointer_info.count, 0)
+        if testing.expect_value(t, len(m.array_info), 1) {
+            testing.expect_value(t, m.array_info[0].size.(u64), 3)
+            testing.expect_value(t, m.array_info[0].pointer_info.count, 1)
+        }
+    }
+
+    // `const char *list[]` is passed as `const char **`.
+    names := om.get(rs.symbols, "names").value.(runic.Function)
+    if testing.expect_value(t, len(names.parameters), 1) {
+        list := names.parameters[0].type
+        testing.expect_value(t, list.spec.(runic.Builtin), runic.Builtin.String)
+        testing.expect_value(t, list.pointer_info.count, 1)
+        testing.expect_value(t, len(list.array_info), 0)
+    }
+
+    // The parameters of a function-pointer type decay the same way.
+    cb := om.get(rs.types, "keymap_cb")
+    fp := cb.spec.(runic.FunctionPointer)
+    if testing.expect_value(t, len(fp.parameters), 1) {
+        keys := fp.parameters[0].type
+        testing.expect_value(t, keys.spec.(runic.Builtin), runic.Builtin.SInt8)
+        testing.expect_value(t, keys.pointer_info.count, 1)
+        testing.expect_value(t, len(keys.array_info), 0)
+    }
+}

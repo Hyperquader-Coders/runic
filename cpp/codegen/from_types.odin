@@ -596,6 +596,11 @@ function_to_type :: proc(
             type, data.err = type_to_type(param_type, cursor, param_hint, param_name)
             if data.err != nil do return .Break
 
+            if param_type.kind == .ConstantArray ||
+               param_type.kind == .IncompleteArray {
+                decay_array_parameter(&type)
+            }
+
             handle_anon_type(&type, param_name)
 
             append(&data.func.parameters, runic.Member{name = param_name, type = type})
@@ -747,4 +752,20 @@ handle_builtin_int_string :: proc(
 handle_builtin_int :: proc {
     handle_builtin_int_cxstring,
     handle_builtin_int_string,
+}
+
+// decay_array_parameter turns the type of a parameter declared as an array,
+// `char keys[32]`, into the pointer C passes: the outermost dimension becomes
+// a pointer to what is left (`char *`; `int m[2][3]` is `int (*)[3]`). An
+// array is never passed by value in C.
+@(private)
+decay_array_parameter :: proc(type: ^runic.Type) {
+    if len(type.array_info) == 0 do return
+
+    ordered_remove(&type.array_info, 0)
+    if len(type.array_info) == 0 {
+        type.pointer_info.count += 1
+    } else {
+        type.array_info[len(type.array_info) - 1].pointer_info.count += 1
+    }
 }

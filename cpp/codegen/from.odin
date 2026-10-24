@@ -1261,6 +1261,11 @@ parse_function_decl :: proc(cursor: clang.Cursor) {
         )
         if ctx.err != nil do return
 
+        if param_type.kind == .ConstantArray ||
+           param_type.kind == .IncompleteArray {
+            decay_array_parameter(&type)
+        }
+
         handle_anon_type(&type, param_name_str)
 
         append(
