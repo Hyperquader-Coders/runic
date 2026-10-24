@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build runic from the Amber-patched fork: branch amber-patched (upstream 0.8 plus two
+# Build runic from the Amber-patched fork: branch amber-patched (upstream 0.8 plus the
 # patches, see DECISIONS.md) with the Odin pinned in mise.toml (dev-2026-05). Output: build/runic.
 # `./amber-build.sh test` runs runic's own tests with the same Odin instead.
 # libclang.so has no unversioned symlink on Mint 22, so one is made under build/lib.

@@ -593,6 +593,7 @@ parse_rune :: proc(
                 f.enable_host_includes = make_platform_value(bool)
                 f.disable_system_include_gen = make_platform_value(bool)
                 f.disable_stdint_macros = make_platform_value(bool)
+                f.evaluate_macros = make_platform_value(bool)
                 f.flags = make_platform_value([]cstring)
                 f.load_all_includes = make_platform_value(bool)
                 f.forward_decl_type = make_platform_value(Type)
@@ -1528,6 +1529,18 @@ parse_rune :: proc(
                     #partial switch v in value {
                     case bool:
                         f.disable_stdint_macros.d[plat] = v
+                    case:
+                        err = errors.message(
+                            "\"from.{}\" has invalid type %T",
+                            key,
+                            v,
+                        )
+                        return
+                    }
+                case "evaluate_macros":
+                    #partial switch v in value {
+                    case bool:
+                        f.evaluate_macros.d[plat] = v
                     case:
                         err = errors.message(
                             "\"from.{}\" has invalid type %T",

@@ -62,7 +62,23 @@ ParseContext :: struct {
     forward_decls:     ^[dynamic]string,
     allocator:         runtime.Allocator,
     err:               errors.Error,
+    // from.evaluate_macros: macros naming a built-in type are types, the
+    // others are evaluated by clang (see evaluate_macro_constants).
+    evaluate_macros:   bool,
+    evaluated:         ^map[string]EvaluatedMacro,
 }
+
+// The value clang computed for a macro's expansion.
+@(private)
+EvaluatedMacro :: union {
+    i64,
+    u64,
+    f64,
+}
+
+// The prefix of the variables the macro file declares to evaluate each macro.
+@(private = "file")
+EVAL_PREFIX :: "__runic_eval_"
 
 generate_runestone :: proc(
     plat: runic.Platform,
@@ -85,6 +101,15 @@ generate_runestone :: proc(
         plat,
     )
     disable_stdint_macros = dsm_ok && disable_stdint_macros
+
+    evaluate_macros, em_ok := runic.platform_value_get(
+        bool,
+        rf.evaluate_macros,
+        plat,
+    )
+    evaluate_macros = em_ok && evaluate_macros
+    evaluated := make(map[string]EvaluatedMacro)
+    defer delete(evaluated)
 
     rune_defines, rd_ok := runic.platform_value_get(
         map[string]string,
@@ -217,6 +242,8 @@ generate_runestone :: proc(
         anon_index        = &anon_index,
         forward_decls     = &forward_decls,
         allocator         = rs_arena_alloc,
+        evaluate_macros   = evaluate_macros,
+        evaluated         = &evaluated,
     }
     context.user_ptr = &ctx
 
@@ -422,6 +449,16 @@ generate_runestone :: proc(
                 strings.write_rune(&stringify2_name, '_')
             }
 
+            // To evaluate a macro, clang needs the types its expansion
+            // names (a cast such as `((Atom) 1)`), so the headers come first.
+            if evaluate_macros {
+                for header in headers {
+                    abs_header, abs_err := filepath.abs(header, rs_arena_alloc)
+                    if abs_err != nil do abs_header = header
+                    fmt.fprintfln(macro_file, "#include \"{}\"", abs_header)
+                }
+            }
+
             fmt.fprintf(
                 macro_file,
                 `#define {}(X) #X
@@ -442,6 +479,7 @@ generate_runestone :: proc(
             for entry in macros.data {
                 name, macro := entry.key, entry.value
                 if macro.func || macro.extern || len(macro.def) == 0 do continue
+                if evaluate_macros && om.contains(rs.types, name) do continue
 
                 prefix_name := strings.concatenate({"R", name}, rs_arena_alloc)
                 for om.contains(macros, prefix_name) {
@@ -469,6 +507,25 @@ generate_runestone :: proc(
             }
 
             os.write_rune(macro_file, ';')
+
+            // One variable per macro, initialised with its expansion, which
+            // clang evaluates when the expansion is a constant expression.
+            if evaluate_macros {
+                os.write_rune(macro_file, '\n')
+                for entry in macros.data {
+                    name, macro := entry.key, entry.value
+                    if macro.func || macro.extern || len(macro.def) == 0 do continue
+                    if om.contains(rs.types, name) do continue
+
+                    fmt.fprintfln(
+                        macro_file,
+                        "static const __auto_type {}{} = ({});",
+                        EVAL_PREFIX,
+                        name,
+                        name,
+                    )
+                }
+            }
         }
 
         defer delete(macro_file_name)
@@ -481,6 +538,9 @@ generate_runestone :: proc(
 
         append(&clang_flags, "-xc")
         append(&clang_flags, "--std=c99")
+        // The headers are read only when the macros are evaluated.
+        macro_parse_options: clang.TranslationUnit_Flags =
+            .SkipFunctionBodies if evaluate_macros else .SkipFunctionBodies | .SingleFileParse
         unit := clang.parseTranslationUnit(
             macro_index,
             macro_file_name_cstr,
@@ -488,7 +548,7 @@ generate_runestone :: proc(
             i32(len(clang_flags)),
             nil,
             0,
-            .SkipFunctionBodies | .SingleFileParse,
+            macro_parse_options,
         )
         delete(macro_file_name_cstr)
 
@@ -517,11 +577,31 @@ generate_runestone :: proc(
 
                 cursor_kind := clang.getCursorKind(cursor)
 
+                // What the included headers declare is not a macro. Only the
+                // top-level declarations are checked: a stringified literal
+                // is spelled outside every file.
+                if ctx.evaluate_macros &&
+                   clang.getCursorKind(parent) == .TranslationUnit &&
+                   !clang.Location_isFromMainFile(
+                           clang.getCursorLocation(cursor),
+                       ) {
+                    return .Continue
+                }
+
                 #partial switch cursor_kind {
                 case .VarDecl:
                     var_name_clang := clang.getCursorSpelling(cursor)
                     var_name := clang_str(var_name_clang)
                     defer clang.disposeString(var_name_clang)
+
+                    if ctx.evaluate_macros &&
+                       strings.has_prefix(var_name, EVAL_PREFIX) {
+                        evaluate_macro_variable(
+                            cursor,
+                            var_name[len(EVAL_PREFIX):],
+                        )
+                        return .Continue
+                    }
 
                     start: int = ---
                     for r, idx in var_name {
@@ -616,8 +696,158 @@ generate_runestone :: proc(
             },
             &ctx,
         )
+
+        if evaluate_macros do apply_evaluated_macros(&rs, evaluated, ignore.constants)
     }
 
+    return
+}
+
+// apply_evaluated_macros gives each constant still held as its C text the
+// value clang computed for it. A constant clang could not evaluate (a
+// keyword, an attribute, a value past i64) is not a value and is dropped,
+// with a line on stderr naming it. Constants the rune ignores are left for
+// the ignore step.
+@(private)
+apply_evaluated_macros :: proc(
+    rs: ^runic.Runestone,
+    evaluated: map[string]EvaluatedMacro,
+    ignored: []string,
+) {
+    dropped := make([dynamic]string, context.temp_allocator)
+
+    for &entry in rs.constants.data {
+        name, const := entry.key, &entry.value
+        if runic.single_list_glob(ignored, name) do continue
+        text, is_text := const.value.(string)
+        if !is_text do continue
+        if spec, ok := const.type.spec.(runic.Builtin);
+           !ok || spec != .Untyped {
+            continue
+        }
+
+        switch v in evaluated[name] {
+        case i64:
+            const.value = v
+        case u64:
+            if v > u64(max(i64)) {
+                fmt.eprintfln(
+                    "macro {} ({}) is {}, past i64: skipped",
+                    name,
+                    text,
+                    v,
+                )
+                append(&dropped, name)
+            } else {
+                const.value = i64(v)
+            }
+        case f64:
+            const.value = v
+        case:
+            fmt.eprintfln(
+                "macro {} ({}) is not a constant expression: skipped",
+                name,
+                text,
+            )
+            append(&dropped, name)
+        }
+    }
+
+    for name in dropped {
+        om.delete_key(&rs.constants, name)
+    }
+}
+
+// evaluate_macro_variable records the value clang computes for the variable
+// the macro file declares for the macro `name`.
+@(private = "file")
+evaluate_macro_variable :: proc(cursor: clang.Cursor, name: string) {
+    ctx := ps()
+
+    result := clang.Cursor_Evaluate(cursor)
+    if result == nil do return
+    defer clang.EvalResult_dispose(result)
+
+    value: EvaluatedMacro
+    #partial switch clang.EvalResult_getKind(result) {
+    case .Int:
+        if clang.EvalResult_isUnsignedInt(result) {
+            value = clang.EvalResult_getAsUnsigned(result)
+        } else {
+            value = clang.EvalResult_getAsLongLong(result)
+        }
+    case .Float:
+        value = clang.EvalResult_getAsDouble(result)
+    case:
+        return
+    }
+
+    ctx.evaluated[strings.clone(name, ctx.allocator)] = value
+}
+
+// macro_builtin_type returns the type a macro such as `#define Bool int`
+// names, when its whole expansion is a built-in arithmetic type.
+@(private)
+macro_builtin_type :: proc(
+    def: string,
+    isz: Int_Sizes,
+) -> (
+    t: runic.Builtin,
+    ok: bool,
+) {
+    words := strings.fields(def, context.temp_allocator)
+    if len(words) == 0 do return
+
+    signed, unsigned: bool
+    shorts, longs, ints, chars, floats, doubles: int
+    for w in words {
+        switch w {
+        case "signed":
+            signed = true
+        case "unsigned":
+            unsigned = true
+        case "short":
+            shorts += 1
+        case "long":
+            longs += 1
+        case "int":
+            ints += 1
+        case "char":
+            chars += 1
+        case "float":
+            floats += 1
+        case "double":
+            doubles += 1
+        case:
+            return
+        }
+    }
+    if signed && unsigned do return
+    if ints > 1 || chars > 1 || floats > 1 || doubles > 1 do return
+
+    switch {
+    case floats == 1:
+        if len(words) != 1 do return
+        return float_type(isz.float), true
+    case doubles == 1:
+        if len(words) != 1 do return
+        return float_type(isz.double), true
+    case chars == 1:
+        if shorts != 0 || longs != 0 || ints != 0 do return
+        // A plain char takes the platform's signedness; runic treats it as signed.
+        return int_type(isz.char, !unsigned), true
+    case shorts == 1:
+        if longs != 0 do return
+        return int_type(isz.short, !unsigned), true
+    case longs == 1:
+        if shorts != 0 do return
+        return int_type(isz.long, !unsigned), true
+    case longs == 2:
+        if shorts != 0 do return
+        return int_type(isz.longlong, !unsigned), true
+    case shorts == 0 && longs == 0:
+        return int_type(isz.Int, !unsigned), true
+    }
     return
 }
 
@@ -1114,15 +1344,20 @@ parse_macro_definition :: proc(cursor: clang.Cursor, not_from_main: bool) {
         )
     }
 
+    macro_func := bool(clang.Cursor_isMacroFunctionLike(cursor))
+
     om.insert(
         ctx.macros,
         macro_name,
-        Macro {
-            def = macro_value,
-            func = bool(clang.Cursor_isMacroFunctionLike(cursor)),
-            extern = not_from_main,
-        },
+        Macro{def = macro_value, func = macro_func, extern = not_from_main},
     )
+
+    // `#define Bool int`: the name is used as a type, so it becomes one.
+    if ctx.evaluate_macros && !macro_func && !not_from_main {
+        if b, ok := macro_builtin_type(macro_value, ctx.int_sizes); ok {
+            om.insert(&ctx.rs.types, macro_name, runic.Type{spec = b})
+        }
+    }
 
     return
 }

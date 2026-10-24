@@ -1,7 +1,7 @@
 # Decisions — Amber's build of runic
 
 This fork is upstream runic 0.8 plus the files that make it buildable today (`amber-0.8`) plus
-two generator patches on the branch `amber-patched` (section 4). `README.md` is upstream's.
+the generator patches on the branch `amber-patched` (section 4). `README.md` is upstream's.
 
 ## 1. Tag 0.8, built with Odin dev-2026-05
 
@@ -26,17 +26,26 @@ generated and checked with. A new upstream tag moves the pin deliberately: tag i
 
 ## 3. What the bindings still need after runic
 
-Beyond the two faults patched in section 4, runic 0.8 leaves `gchar *` as `^char`, because it recognises a char pointer only when the
+Beyond the faults patched in section 4, runic 0.8 leaves `gchar *` as `^char`, because it recognises a char pointer only when the
 pointee is the built-in type and `gchar` is a typedef. The binding repos rewrite that, and
 other gaps, in their own `scripts/postprocess.sh`; this fork does not change runic's output.
 
-## 4. The two patches on `amber-patched`
+## 4. The patches on `amber-patched`
 
-Each is one commit on `amber-0.8`, with tests, and is also offered upstream; moving to a newer
-upstream tag means rebasing the two commits.
+Each is one commit on `amber-0.8`, with tests; the first two are also offered upstream. Moving to a newer
+upstream tag means rebasing these commits.
 
 - **Declared arrays.** runic writes `[^]T` for any pointer whose C name ends in `s`. With
   `to.detect.parameters: declared` a procedure parameter is `^T` (`T **` is `^^T`) unless
   `to.detect.arrays` lists it. Without the key nothing changes.
 - **va_list.** A procedure whose last parameter is a `va_list` is not emitted; the foreign block
   carries a comment naming it. Real `...` procedures are unchanged.
+- **Evaluated macros.** runic keeps an object-like macro it cannot parse as one number as its C
+  text, which the Odin output writes as a raw string: `(1L << 15)`, `0L` and `((Atom) 31)` become
+  strings, not values. A macro that names a built-in type (`#define Bool int`) stays text too,
+  and every struct with a member of that type is dropped as unknown. With
+  `from.evaluate_macros: true` such a macro is a type alias of the built-in type, and the others
+  are evaluated by clang, with the headers included so a cast to their types resolves: an
+  integer or float result is the constant's value. A macro that is no constant expression (a
+  keyword, an attribute) or an unsigned value past `i64` is dropped, with a line on stderr naming
+  it; constants the rune ignores are left alone. Without the key nothing changes.

@@ -1004,3 +1004,80 @@ test_cpp_unknown_int :: proc(t: ^testing.T) {
         runic.Builtin.SInt8,
     )
 }
+
+@(test)
+test_cpp_evaluate_macros :: proc(t: ^testing.T) {
+    rf := runic.From {
+        language = "c",
+        shared = {d = {runic.Platform{.Any, .Any} = "libevaluate.so"}},
+        headers = {
+            d = {
+                runic.Platform{.Any, .Any} = {"test_data/evaluate_macros.h"},
+            },
+        },
+        evaluate_macros = {d = {runic.Platform{.Any, .Any} = true}},
+    }
+    defer delete(rf.shared.d)
+    defer delete(rf.headers.d)
+    defer delete(rf.evaluate_macros.d)
+
+    rs, err := generate_runestone(
+        runic.Platform{.Linux, .x86_64},
+        RUNESTONE_TEST_PATH,
+        rf,
+    )
+    if !testing.expect_value(t, err, nil) do return
+    defer runic.runestone_destroy(&rs)
+
+    // A macro naming a built-in type is a type, and what uses it refers to it.
+    bool_type := om.get(rs.types, "Bool")
+    testing.expect_value(t, bool_type.spec.(runic.Builtin), runic.Builtin.SInt32)
+    status_type := om.get(rs.types, "Status")
+    testing.expect_value(t, status_type.spec.(runic.Builtin), runic.Builtin.SInt32)
+    unsigned_type := om.get(rs.types, "Unsigned")
+    testing.expect_value(t, unsigned_type.spec.(runic.Builtin), runic.Builtin.UInt64)
+    testing.expect(t, !om.contains(rs.constants, "Bool"))
+    testing.expect(t, !om.contains(rs.constants, "Status"))
+
+    ev := om.get(rs.types, "event")
+    members := ev.spec.(runic.Struct).members
+    if testing.expect_value(t, len(members), 2) {
+        testing.expect_value(t, members[0].type.spec.(string), "Bool")
+        testing.expect_value(t, members[1].type.spec.(string), "Status")
+        testing.expect_value(t, members[1].type.pointer_info.count, 1)
+    }
+
+    filter := om.get(rs.symbols, "filter").value.(runic.Function)
+    testing.expect_value(t, filter.return_type.spec.(string), "Bool")
+    if testing.expect_value(t, len(filter.parameters), 2) {
+        testing.expect_value(t, filter.parameters[1].type.spec.(string), "Bool")
+        testing.expect_value(t, filter.parameters[1].type.pointer_info.count, 1)
+    }
+
+    // Constant expressions are evaluated: suffixes, shifts, casts to the header's types.
+    expect_int :: proc(t: ^testing.T, rs: runic.Runestone, name: string, want: i64, loc := #caller_location) {
+        c, ok := om.get(rs.constants, name)
+        if !testing.expect(t, ok, name, loc = loc) do return
+        v, is_int := c.value.(i64)
+        testing.expectf(t, is_int, "{} is {}, not an integer", name, c.value, loc = loc)
+        testing.expect_value(t, v, want, loc = loc)
+    }
+    expect_int(t, rs, "PLAIN", 7)
+    expect_int(t, rs, "SUFFIXED", 0)
+    expect_int(t, rs, "SHIFTED", 1 << 15)
+    expect_int(t, rs, "COMBINED", 9)
+    expect_int(t, rs, "HEX_LONG", 0xff)
+    expect_int(t, rs, "CAST", 31)
+    expect_int(t, rs, "NEGATIVE", -2)
+
+    floaty := om.get(rs.constants, "FLOATY")
+    testing.expect_value(t, floaty.value.(f64), 0.5)
+
+    name := om.get(rs.constants, "NAME")
+    testing.expect_value(t, name.value.(string), "inputStyle")
+
+    // Not values: a keyword, an attribute, an unsigned past i64.
+    testing.expect(t, !om.contains(rs.constants, "_Xconst"))
+    testing.expect(t, !om.contains(rs.constants, "UNUSED"))
+    testing.expect(t, !om.contains(rs.constants, "ALL_ONES"))
+}
