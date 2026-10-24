@@ -18,6 +18,8 @@
 !test_data/va_list.h
 !test_data/evaluate_macros.h
 !test_data/array_parameter.h
+!test_data/extern_macros/base.h
+!test_data/extern_macros/extension.h
 test_data/*.ppp.*
 test_data/*.pp.*
 test_data/*.ppp-pp.*

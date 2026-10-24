@@ -48,7 +48,9 @@ upstream tag means rebasing these commits.
   are evaluated by clang, with the headers included so a cast to their types resolves: an
   integer or float result is the constant's value. A macro that is no constant expression (a
   keyword, an attribute) or an unsigned value past `i64` is dropped, with a line on stderr naming
-  it; constants the rune ignores are left alone. Without the key nothing changes.
+  it; constants the rune ignores are left alone. A macro naming a built-in type in an included
+  header counts as that header's type, so in an extern header it is an extern like a typedef there
+  (XTest.h's `Bool` is Xlib.h's, `xlib.Bool`). Without the key nothing changes.
 - **Array parameters.** runic types a parameter declared as an array, `char keys[32]`, as the
   array, which an Odin procedure passes by value; C passes a pointer to its elements. The
   outermost dimension loses its size and so is written as a multi-pointer (`[^]i8`; `int m[2][3]`

@@ -1013,6 +1013,32 @@ parse_cursor_not_from_main :: proc(cursor: clang.Cursor) -> bool {
         }
     case .MacroDefinition:
         parse_macro_definition(cursor, true)
+
+        // `#define Bool int` in an included header names a type there as
+        // well: kept as an included type, so an extern header's becomes
+        // that package's type.
+        if ctx.evaluate_macros &&
+           !clang.Cursor_isMacroFunctionLike(cursor) &&
+           !(display_name in ctx.included_types) {
+            if macro, m_ok := om.get(ctx.macros^, display_name); m_ok {
+                if b, b_ok := macro_builtin_type(macro.def, ctx.int_sizes);
+                   b_ok {
+                    ctx.included_types[strings.clone(display_name, ctx.allocator)] =
+                        IncludedType {
+                            file_name = strings.clone(
+                                file_name,
+                                ctx.allocator,
+                            ),
+                            type      = runic.Type{spec = b},
+                            system    = bool(
+                                clang.Location_isInSystemHeader(
+                                    cursor_location,
+                                ),
+                            ),
+                        }
+                }
+            }
+        }
     }
 
     return false

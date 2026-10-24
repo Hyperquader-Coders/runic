@@ -1148,3 +1148,54 @@ test_cpp_array_parameter :: proc(t: ^testing.T) {
         }
     }
 }
+
+// A macro naming a built-in type in an extern header (`#define Bool int` in
+// Xlib.h, seen from XTest.h) is that header's type: what uses it refers to the
+// extern, as to a typedef there.
+@(test)
+test_cpp_evaluate_macros_extern :: proc(t: ^testing.T) {
+    rf := runic.From {
+        language = "c",
+        shared = {d = {runic.Platform{.Any, .Any} = "libextension.so"}},
+        headers = {
+            d = {
+                runic.Platform{.Any, .Any} = {
+                    "test_data/extern_macros/extension.h",
+                },
+            },
+        },
+        extern = {"test_data/extern_macros/base.h"},
+        evaluate_macros = {d = {runic.Platform{.Any, .Any} = true}},
+    }
+    defer delete(rf.shared.d)
+    defer delete(rf.headers.d)
+    defer delete(rf.evaluate_macros.d)
+
+    rs, err := generate_runestone(
+        runic.Platform{.Linux, .x86_64},
+        RUNESTONE_TEST_PATH,
+        rf,
+    )
+    if !testing.expect_value(t, err, nil) do return
+    defer runic.runestone_destroy(&rs)
+    runic.from_postprocess_runestone(&rs, rf)
+
+    testing.expect(t, !om.contains(rs.types, "Bool"))
+    if testing.expect(t, om.contains(rs.externs, "Bool")) {
+        testing.expect_value(
+            t,
+            om.get(rs.externs, "Bool").spec.(runic.Builtin),
+            runic.Builtin.SInt32,
+        )
+    }
+
+    query := om.get(rs.symbols, "query_extension").value.(runic.Function)
+    testing.expect_value(t, query.return_type.spec.(runic.ExternType), "Bool")
+    disc := om.get(rs.symbols, "discard").value.(runic.Function)
+    testing.expect_value(t, disc.return_type.spec.(runic.ExternType), "Status")
+    if testing.expect_value(t, len(disc.parameters), 1) {
+        pending := disc.parameters[0].type
+        testing.expect_value(t, pending.spec.(runic.ExternType), "Bool")
+        testing.expect_value(t, pending.pointer_info.count, 1)
+    }
+}
