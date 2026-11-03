@@ -52,6 +52,7 @@ From :: struct {
     enable_host_includes:       PlatformValue(bool),
     disable_system_include_gen: PlatformValue(bool),
     disable_stdint_macros:      PlatformValue(bool),
+    evaluate_macros:            PlatformValue(bool),
     flags:                      PlatformValue([]cstring),
     load_all_includes:          PlatformValue(bool),
     forward_decl_type:          PlatformValue(Type),
@@ -187,6 +188,10 @@ OverwriteInstruction :: union {
 
 OdinDetect :: struct {
     multi_pointer: string,
+    // "declared": procedure parameters are [^]T only if listed in `arrays`.
+    parameters:    string,
+    // procedure name -> parameter names that are arrays
+    arrays:        map[string][]string,
 }
 
 

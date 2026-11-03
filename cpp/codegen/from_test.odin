@@ -1004,3 +1004,198 @@ test_cpp_unknown_int :: proc(t: ^testing.T) {
         runic.Builtin.SInt8,
     )
 }
+
+@(test)
+test_cpp_evaluate_macros :: proc(t: ^testing.T) {
+    rf := runic.From {
+        language = "c",
+        shared = {d = {runic.Platform{.Any, .Any} = "libevaluate.so"}},
+        headers = {
+            d = {
+                runic.Platform{.Any, .Any} = {"test_data/evaluate_macros.h"},
+            },
+        },
+        evaluate_macros = {d = {runic.Platform{.Any, .Any} = true}},
+    }
+    defer delete(rf.shared.d)
+    defer delete(rf.headers.d)
+    defer delete(rf.evaluate_macros.d)
+
+    rs, err := generate_runestone(
+        runic.Platform{.Linux, .x86_64},
+        RUNESTONE_TEST_PATH,
+        rf,
+    )
+    if !testing.expect_value(t, err, nil) do return
+    defer runic.runestone_destroy(&rs)
+
+    // A macro naming a built-in type is a type, and what uses it refers to it.
+    bool_type := om.get(rs.types, "Bool")
+    testing.expect_value(t, bool_type.spec.(runic.Builtin), runic.Builtin.SInt32)
+    status_type := om.get(rs.types, "Status")
+    testing.expect_value(t, status_type.spec.(runic.Builtin), runic.Builtin.SInt32)
+    unsigned_type := om.get(rs.types, "Unsigned")
+    testing.expect_value(t, unsigned_type.spec.(runic.Builtin), runic.Builtin.UInt64)
+    testing.expect(t, !om.contains(rs.constants, "Bool"))
+    testing.expect(t, !om.contains(rs.constants, "Status"))
+
+    ev := om.get(rs.types, "event")
+    members := ev.spec.(runic.Struct).members
+    if testing.expect_value(t, len(members), 2) {
+        testing.expect_value(t, members[0].type.spec.(string), "Bool")
+        testing.expect_value(t, members[1].type.spec.(string), "Status")
+        testing.expect_value(t, members[1].type.pointer_info.count, 1)
+    }
+
+    filter := om.get(rs.symbols, "filter").value.(runic.Function)
+    testing.expect_value(t, filter.return_type.spec.(string), "Bool")
+    if testing.expect_value(t, len(filter.parameters), 2) {
+        testing.expect_value(t, filter.parameters[1].type.spec.(string), "Bool")
+        testing.expect_value(t, filter.parameters[1].type.pointer_info.count, 1)
+    }
+
+    // Constant expressions are evaluated: suffixes, shifts, casts to the header's types.
+    expect_int :: proc(t: ^testing.T, rs: runic.Runestone, name: string, want: i64, loc := #caller_location) {
+        c, ok := om.get(rs.constants, name)
+        if !testing.expect(t, ok, name, loc = loc) do return
+        v, is_int := c.value.(i64)
+        testing.expectf(t, is_int, "{} is {}, not an integer", name, c.value, loc = loc)
+        testing.expect_value(t, v, want, loc = loc)
+    }
+    expect_int(t, rs, "PLAIN", 7)
+    expect_int(t, rs, "SUFFIXED", 0)
+    expect_int(t, rs, "SHIFTED", 1 << 15)
+    expect_int(t, rs, "COMBINED", 9)
+    expect_int(t, rs, "HEX_LONG", 0xff)
+    expect_int(t, rs, "CAST", 31)
+    expect_int(t, rs, "NEGATIVE", -2)
+
+    floaty := om.get(rs.constants, "FLOATY")
+    testing.expect_value(t, floaty.value.(f64), 0.5)
+
+    name := om.get(rs.constants, "NAME")
+    testing.expect_value(t, name.value.(string), "inputStyle")
+
+    // Not values: a keyword, an attribute, an unsigned past i64.
+    testing.expect(t, !om.contains(rs.constants, "_Xconst"))
+    testing.expect(t, !om.contains(rs.constants, "UNUSED"))
+    testing.expect(t, !om.contains(rs.constants, "ALL_ONES"))
+}
+
+@(test)
+test_cpp_array_parameter :: proc(t: ^testing.T) {
+    rf := runic.From {
+        language = "c",
+        shared = {d = {runic.Platform{.Any, .Any} = "libarray_parameter.so"}},
+        headers = {
+            d = {
+                runic.Platform{.Any, .Any} = {"test_data/array_parameter.h"},
+            },
+        },
+    }
+    defer delete(rf.shared.d)
+    defer delete(rf.headers.d)
+
+    rs, err := generate_runestone(
+        runic.Platform{.Linux, .x86_64},
+        RUNESTONE_TEST_PATH,
+        rf,
+    )
+    if !testing.expect_value(t, err, nil) do return
+    defer runic.runestone_destroy(&rs)
+
+    // `char keys_return[32]` is passed as a pointer to chars: `[^]i8`.
+    query := om.get(rs.symbols, "query_keymap").value.(runic.Function)
+    if testing.expect_value(t, len(query.parameters), 2) {
+        keys := query.parameters[1].type
+        testing.expect_value(t, keys.spec.(runic.Builtin), runic.Builtin.SInt8)
+        testing.expect_value(t, keys.pointer_info.count, 0)
+        if testing.expect_value(t, len(keys.array_info), 1) {
+            testing.expect_value(t, keys.array_info[0].size, nil)
+        }
+    }
+
+    // `int m[2][3]` is passed as a pointer to rows of three: `[^][3]i32`.
+    mat := om.get(rs.symbols, "matrix").value.(runic.Function)
+    if testing.expect_value(t, len(mat.parameters), 1) {
+        m := mat.parameters[0].type
+        testing.expect_value(t, m.spec.(runic.Builtin), runic.Builtin.SInt32)
+        testing.expect_value(t, m.pointer_info.count, 0)
+        if testing.expect_value(t, len(m.array_info), 2) {
+            testing.expect_value(t, m.array_info[0].size, nil)
+            testing.expect_value(t, m.array_info[1].size.(u64), 3)
+        }
+    }
+
+    // `const char *list[]` is unchanged: a pointer to strings, `[^]cstring`.
+    names := om.get(rs.symbols, "names").value.(runic.Function)
+    if testing.expect_value(t, len(names.parameters), 1) {
+        list := names.parameters[0].type
+        testing.expect_value(t, list.spec.(runic.Builtin), runic.Builtin.String)
+        if testing.expect_value(t, len(list.array_info), 1) {
+            testing.expect_value(t, list.array_info[0].size, nil)
+        }
+    }
+
+    // The parameters of a function-pointer type are passed the same way.
+    cb := om.get(rs.types, "keymap_cb")
+    fp := cb.spec.(runic.FunctionPointer)
+    if testing.expect_value(t, len(fp.parameters), 1) {
+        keys := fp.parameters[0].type
+        testing.expect_value(t, keys.spec.(runic.Builtin), runic.Builtin.SInt8)
+        if testing.expect_value(t, len(keys.array_info), 1) {
+            testing.expect_value(t, keys.array_info[0].size, nil)
+        }
+    }
+}
+
+// A macro naming a built-in type in an extern header (`#define Bool int` in
+// Xlib.h, seen from XTest.h) is that header's type: what uses it refers to the
+// extern, as to a typedef there.
+@(test)
+test_cpp_evaluate_macros_extern :: proc(t: ^testing.T) {
+    rf := runic.From {
+        language = "c",
+        shared = {d = {runic.Platform{.Any, .Any} = "libextension.so"}},
+        headers = {
+            d = {
+                runic.Platform{.Any, .Any} = {
+                    "test_data/extern_macros/extension.h",
+                },
+            },
+        },
+        extern = {"test_data/extern_macros/base.h"},
+        evaluate_macros = {d = {runic.Platform{.Any, .Any} = true}},
+    }
+    defer delete(rf.shared.d)
+    defer delete(rf.headers.d)
+    defer delete(rf.evaluate_macros.d)
+
+    rs, err := generate_runestone(
+        runic.Platform{.Linux, .x86_64},
+        RUNESTONE_TEST_PATH,
+        rf,
+    )
+    if !testing.expect_value(t, err, nil) do return
+    defer runic.runestone_destroy(&rs)
+    runic.from_postprocess_runestone(&rs, rf)
+
+    testing.expect(t, !om.contains(rs.types, "Bool"))
+    if testing.expect(t, om.contains(rs.externs, "Bool")) {
+        testing.expect_value(
+            t,
+            om.get(rs.externs, "Bool").spec.(runic.Builtin),
+            runic.Builtin.SInt32,
+        )
+    }
+
+    query := om.get(rs.symbols, "query_extension").value.(runic.Function)
+    testing.expect_value(t, query.return_type.spec.(runic.ExternType), "Bool")
+    disc := om.get(rs.symbols, "discard").value.(runic.Function)
+    testing.expect_value(t, disc.return_type.spec.(runic.ExternType), "Status")
+    if testing.expect_value(t, len(disc.parameters), 1) {
+        pending := disc.parameters[0].type
+        testing.expect_value(t, pending.spec.(runic.ExternType), "Bool")
+        testing.expect_value(t, pending.pointer_info.count, 1)
+    }
+}

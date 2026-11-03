@@ -593,6 +593,7 @@ parse_rune :: proc(
                 f.enable_host_includes = make_platform_value(bool)
                 f.disable_system_include_gen = make_platform_value(bool)
                 f.disable_stdint_macros = make_platform_value(bool)
+                f.evaluate_macros = make_platform_value(bool)
                 f.flags = make_platform_value([]cstring)
                 f.load_all_includes = make_platform_value(bool)
                 f.forward_decl_type = make_platform_value(Type)
@@ -1536,6 +1537,18 @@ parse_rune :: proc(
                         )
                         return
                     }
+                case "evaluate_macros":
+                    #partial switch v in value {
+                    case bool:
+                        f.evaluate_macros.d[plat] = v
+                    case:
+                        err = errors.message(
+                            "\"from.{}\" has invalid type %T",
+                            key,
+                            v,
+                        )
+                        return
+                    }
                 case "flags":
                     flags := make([dynamic]cstring, rn_arena_alloc)
 
@@ -2376,6 +2389,51 @@ parse_rune :: proc(
                             mp_ok,
                             "\"to.detect.multi_pointer\" has invalid type",
                         ) or_return
+                    }
+                    if params, p_ok := d["parameters"]; p_ok {
+                        t.detect.parameters, p_ok = params.(string)
+                        errors.wrap(
+                            p_ok,
+                            "\"to.detect.parameters\" has invalid type",
+                        ) or_return
+                    }
+                    if arrays, a_ok := d["arrays"]; a_ok {
+                        a_map: yaml.Mapping
+                        a_map, a_ok = arrays.(yaml.Mapping)
+                        errors.wrap(
+                            a_ok,
+                            "\"to.detect.arrays\" has invalid type",
+                        ) or_return
+
+                        t.detect.arrays = make(
+                            map[string][]string,
+                            allocator = rn_arena_alloc,
+                        )
+                        for proc_name, names in a_map {
+                            #partial switch n in names {
+                            case string:
+                                arr := make([]string, 1, rn_arena_alloc)
+                                arr[0] = n
+                                t.detect.arrays[proc_name] = arr
+                            case yaml.Sequence:
+                                arr := make([]string, len(n), rn_arena_alloc)
+                                for seq_v, idx in n {
+                                    arr[idx], a_ok = seq_v.(string)
+                                    errors.wrap(
+                                        a_ok,
+                                        "\"to.detect.arrays\" parameter has invalid type",
+                                    ) or_return
+                                }
+                                t.detect.arrays[proc_name] = arr
+                            case:
+                                err = errors.message(
+                                    "\"to.detect.arrays.{}\" has invalid type %T",
+                                    proc_name,
+                                    n,
+                                )
+                                return
+                            }
+                        }
                     }
                 case:
                     err = errors.message(
